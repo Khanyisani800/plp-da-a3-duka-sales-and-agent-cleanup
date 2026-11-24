@@ -1,0 +1,75 @@
+name: Run Assignment 3 Notebooks and Export Deliverables
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt openpyxl jupyter nbconvert
+
+      - name: Generate raw CSV datasets
+        run: python generate_data.py
+
+      - name: Export branch summary Excel file
+        run: |
+          python -c '
+          import os
+          import pandas as pd
+
+          df = pd.read_csv("duka_sales.csv")
+          df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
+          df["revenue"] = pd.to_numeric(df["revenue"], errors="coerce")
+
+          branch_summary = (
+              df.groupby("branch", dropna=False)["revenue"]
+              .agg(total_revenue="sum", order_count="count", avg_order_value="mean")
+              .reset_index()
+          )
+          branch_channel_pivot = pd.pivot_table(
+              df,
+              values="revenue",
+              index="branch",
+              columns="channel",
+              aggfunc="sum",
+              fill_value=0,
+          )
+
+          os.makedirs("excel", exist_ok=True)
+          with pd.ExcelWriter("excel/duka_branch_summary.xlsx", engine="openpyxl") as writer:
+              branch_summary.to_excel(writer, sheet_name="branch_summary", index=False)
+              branch_channel_pivot.to_excel(writer, sheet_name="branch_channel_revenue")
+          print("Exported excel/duka_branch_summary.xlsx")
+          '
+
+      - name: Execute notebooks and save outputs
+        run: |
+          jupyter nbconvert --to notebook --execute --inplace duka_sales_exploration.ipynb
+          jupyter nbconvert --to notebook --execute --inplace agent_cleanup.ipynb
+
+      - name: Commit executed notebooks and generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f duka_sales_exploration.ipynb agent_cleanup.ipynb outputs/ excel/duka_branch_summary.xlsx
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Run Assignment 3 notebooks and export deliverables"
+            git push
+          fi
