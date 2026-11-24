@@ -33,28 +33,45 @@ jobs:
           import pandas as pd
 
           df = pd.read_csv("duka_sales.csv")
-          df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
-          df["revenue"] = pd.to_numeric(df["revenue"], errors="coerce")
+          print("Columns in duka_sales.csv:", list(df.columns))
+
+          candidates = ["revenue", "total_revenue", "sales_amount", "total_amount", "order_total", "amount", "total"]
+          rev_col = next((c for c in candidates if c in df.columns), None)
+
+          if rev_col is None and {"quantity", "unit_price"}.issubset(df.columns):
+              df["revenue"] = pd.to_numeric(df["quantity"], errors="coerce") * pd.to_numeric(df["unit_price"], errors="coerce")
+              rev_col = "revenue"
+          elif rev_col is None:
+              raise ValueError(f"Could not find a revenue column in {list(df.columns)}")
+
+          df["revenue"] = pd.to_numeric(df[rev_col], errors="coerce")
+
+          branch_col = next((c for c in ["branch", "store", "location", "region"] if c in df.columns), None)
+          channel_col = next((c for c in ["channel", "sales_channel", "order_channel"] if c in df.columns), None)
+
+          if branch_col is None:
+              raise ValueError(f"Could not find a branch column in {list(df.columns)}")
 
           branch_summary = (
-              df.groupby("branch", dropna=False)["revenue"]
+              df.groupby(branch_col, dropna=False)["revenue"]
               .agg(total_revenue="sum", order_count="count", avg_order_value="mean")
               .reset_index()
-          )
-          branch_channel_pivot = pd.pivot_table(
-              df,
-              values="revenue",
-              index="branch",
-              columns="channel",
-              aggfunc="sum",
-              fill_value=0,
           )
 
           os.makedirs("excel", exist_ok=True)
           with pd.ExcelWriter("excel/duka_branch_summary.xlsx", engine="openpyxl") as writer:
               branch_summary.to_excel(writer, sheet_name="branch_summary", index=False)
-              branch_channel_pivot.to_excel(writer, sheet_name="branch_channel_revenue")
-          print("Exported excel/duka_branch_summary.xlsx")
+              if channel_col:
+                  branch_channel_pivot = pd.pivot_table(
+                      df,
+                      values="revenue",
+                      index=branch_col,
+                      columns=channel_col,
+                      aggfunc="sum",
+                      fill_value=0,
+                  )
+                  branch_channel_pivot.to_excel(writer, sheet_name="branch_channel_revenue")
+          print("Exported excel/duka_branch_summary.xlsx using column:", rev_col)
           '
 
       - name: Execute notebooks and save outputs
